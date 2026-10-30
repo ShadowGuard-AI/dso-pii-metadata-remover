@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # dso-pii-metadata-remover
 Removes Personally Identifiable Information (PII) metadata from common file formats (e.g., PDF, DOCX, XLSX). - Focused on Tools for sanitizing and obfuscating sensitive data within text files and structured data formats
 
