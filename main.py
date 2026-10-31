@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import chardet
+import re
 import traceback
 
 # Define global logger
@@ -14,7 +15,7 @@ def setup_argparse():
     """
     Sets up the argument parser for the command-line interface.
     """
-    parser = argparse.ArgumentParser(description="Removes PII metadata from common file formats.")
+    parser = argparse.ArgumentParser(description="Replaces PII patterns in plain text files. Plain text only: it does not read PDF, DOCX, or XLSX files and does not edit file metadata.")
     parser.add_argument("input_file", help="The input file to process.")
     parser.add_argument("output_file", help="The output file to write to.")
     parser.add_argument("-l", "--log_level", help="Set the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).",
@@ -22,10 +23,17 @@ def setup_argparse():
     return parser
 
 
+PATTERNS = [
+    ("email", re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"), "[REDACTED_EMAIL]"),
+    ("identifier", re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"), "[REDACTED_IDENTIFIER]"),
+    ("phone", re.compile(r"(?<!\d)(?:\+?1[\s.\-]?)?(?:\(\d{3}\)\s?|\d{3}[-.\s]?)\d{3}[-.\s]?\d{4}(?!\d)"), "[REDACTED_PHONE]"),
+    ("domain", re.compile(r"\b(?:[A-Za-z0-9\-]+\.)+(?:com|org|net|io|edu|gov|info|biz)\b", re.IGNORECASE), "[REDACTED_DOMAIN]"),
+]
+
+
 def remove_pii_metadata(input_file, output_file):
     """
-    Removes PII metadata from the given input file.
-    Currently supports text-based files only.
+    Replaces PII patterns in a plain text file. Returns the total replacement count.
     """
     try:
         # Detect file encoding
@@ -41,16 +49,21 @@ def remove_pii_metadata(input_file, output_file):
         with open(input_file, 'r', encoding=encoding) as infile:
             content = infile.read()
 
-        # Basic PII removal (replace common patterns with placeholders)
-        # NOTE: This is a placeholder implementation.  A proper implementation would use more sophisticated techniques.
-        content = content.replace("@example.com", "[REDACTED_EMAIL_DOMAIN]") #Redact email domain.
-        content = content.replace("example.com", "[REDACTED_DOMAIN]") #Redact domain.
-        
-        # Write the sanitized content to the output file
+        total = 0
+        for name, pattern, replacement in PATTERNS:
+            content, n = pattern.subn(replacement, content)
+            if n:
+                logger.info(f"Replaced {n} {name} value(s).")
+            total += n
+        if total == 0:
+            logger.error("No PII patterns found; nothing was replaced.")
+            return 0
+
         with open(output_file, 'w', encoding=encoding) as outfile:
             outfile.write(content)
 
-        logger.info(f"Successfully sanitized {input_file} and wrote to {output_file}")
+        logger.info(f"Successfully sanitized {input_file} and wrote to {output_file} ({total} replacement(s))")
+        return total
 
     except FileNotFoundError:
         logger.error(f"Error: Input file not found: {input_file}")
@@ -67,6 +80,9 @@ def validate_input(input_file, output_file):
     """
     if not os.path.exists(input_file):
         raise FileNotFoundError(f"Input file not found: {input_file}")
+
+    if os.path.realpath(output_file) == os.path.realpath(input_file):
+        raise ValueError("Output file resolves to the input file; refusing to overwrite it.")
 
     if os.path.exists(output_file):
         logger.warning(f"Output file {output_file} already exists. It will be overwritten.")
@@ -101,12 +117,16 @@ def main():
     
     try:
         validate_input(args.input_file, args.output_file)
-        remove_pii_metadata(args.input_file, args.output_file)
+        total = remove_pii_metadata(args.input_file, args.output_file)
     except Exception as e:
         logger.error(f"PII removal process failed: {e}")
         sys.exit(1)
 
-    logger.info("PII metadata removal process completed.")
+    if total == 0:
+        logger.error("Nothing was replaced; the run did not complete a sanitization.")
+        sys.exit(1)
+
+    logger.info("PII removal process completed.")
 
 
 if __name__ == "__main__":
